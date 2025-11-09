@@ -21,7 +21,7 @@ with project_client:
     # Create an agent with the Code Interpreter tool
     agent = project_client.agents.create_agent(
         model=os.environ["MODEL_DEPLOYMENT_NAME"],  # Model deployment name
-        name="my-agent",  # Name of the agent
+        name="math-agent",  # Name of the agent
         instructions="You politely help with math questions. Use the Code Interpreter tool when asked to visualize numbers.",  # Instructions for the agent
         tools=code_interpreter.definitions,  # Attach the tool
     )
