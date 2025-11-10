@@ -1,14 +1,12 @@
 import json
-import os
 import time
 from dataclasses import dataclass
 from typing import Dict, Optional
 
-from azure.ai.projects import AIProjectClient
-from azure.identity import DefaultAzureCredential
-from dotenv import load_dotenv
-
-load_dotenv()
+from config.azure.ai_foundary_config import (
+    MODEL_DEPLOYMENT_NAME,
+    project_client_context,
+)
 
 
 @dataclass(frozen=True)
@@ -49,13 +47,6 @@ def get_mock_weather(location: str, date: Optional[str] = None) -> str:
     return report.serialize(date=date)
 
 
-project_endpoint = os.environ["PROJECT_ENDPOINT"]
-
-project_client = AIProjectClient(
-    endpoint=project_endpoint,
-    credential=DefaultAzureCredential(),
-)
-
 weather_tool_definition = {
     "type": "function",
     "function": {
@@ -82,9 +73,9 @@ weather_tool_definition = {
 
 
 def main() -> None:
-    with project_client:
+    with project_client_context() as project_client:
         agent = project_client.agents.create_agent(
-            model=os.environ["MODEL_DEPLOYMENT_NAME"],
+            model=MODEL_DEPLOYMENT_NAME,
             name="weather-assistant",
             instructions=(
                 "You are a helpful weather assistant. Call the get_mock_weather tool to reply "

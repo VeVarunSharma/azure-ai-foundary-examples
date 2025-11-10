@@ -1,17 +1,27 @@
+import os
 from pathlib import Path
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
 from azure.ai.agents.models import CodeInterpreterTool
+from dotenv import load_dotenv
 
-from config.azure.ai_foundary_config import (
-    MODEL_DEPLOYMENT_NAME,
-    project_client_context,
+load_dotenv()
+# Create an AIProjectClient from an endpoint, copied from your Azure AI Foundry project.
+# You need to login to Azure subscription via Azure CLI and set the environment variables
+project_endpoint = os.environ["PROJECT_ENDPOINT"]  # Ensure the PROJECT_ENDPOINT environment variable is set
+model_deployment_name = os.environ["MODEL_DEPLOYMENT_NAME"]  # Ensure the MODEL_DEPLOYMENT_NAME environment variable is set
+# Create an AIProjectClient instance
+project_client = AIProjectClient(
+    endpoint=project_endpoint,
+    credential=DefaultAzureCredential(),  # Use Azure Default Credential for authentication
 )
 
 code_interpreter = CodeInterpreterTool()
-with project_client_context() as project_client:
+with project_client:
     # Create an agent with the Code Interpreter tool
     agent = project_client.agents.create_agent(
-    model=MODEL_DEPLOYMENT_NAME,
-        name="math-agent",  # Name of the agent
+        model="gpt-4o",
+        name="math-agent-v1",  # Name of the agent
         instructions="You politely help with math questions. Use the Code Interpreter tool when asked to visualize numbers.",  # Instructions for the agent
         tools=code_interpreter.definitions,  # Attach the tool
     )
@@ -49,7 +59,7 @@ with project_client_context() as project_client:
         # Save every image file in the message
         for img in message.image_contents:
             file_id = img.image_file.file_id
-            file_name = f"tmp/images/{file_id}_image_file.png"
+            file_name = f"{file_id}_image_file.png"
             project_client.agents.files.save(file_id=file_id, file_name=file_name)
             print(f"Saved image file to: {Path.cwd() / file_name}")
 

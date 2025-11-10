@@ -3,10 +3,11 @@ import os
 import time
 from typing import Dict, Optional
 import requests
-from azure.ai.projects import AIProjectClient
-from azure.identity import DefaultAzureCredential
-from dotenv import load_dotenv
-load_dotenv()
+
+from config.azure.ai_foundary_config import (
+    MODEL_DEPLOYMENT_NAME,
+    project_client_context,
+)
 ALPHAVANTAGE_API_KEY = os.environ.get("ALPHAVANTAGE_API_KEY")
 ALPHAVANTAGE_BASE_URL = "https://www.alphavantage.co/query"
 DEFAULT_INTERVAL = "5min"
@@ -23,11 +24,6 @@ KNOWN_COMPANIES: Dict[str, str] = {
     "nvidia": "NVDA",
     "ibm": "IBM",
 }
-project_endpoint = os.environ["PROJECT_ENDPOINT"]
-project_client = AIProjectClient(
-    endpoint=project_endpoint,
-    credential=DefaultAzureCredential(),
-)
 session = requests.Session()
 def _resolve_symbol(company: Optional[str], symbol: Optional[str]) -> Optional[str]:
     if symbol:
@@ -44,6 +40,7 @@ def _resolve_symbol(company: Optional[str], symbol: Optional[str]) -> Optional[s
     if 1 <= len(fallback) <= 6 and fallback.replace(".", "").isalnum():
         return fallback
     return None
+
 def fetch_intraday_stock_price(
     company: Optional[str] = None, symbol: Optional[str] = None, interval: str = DEFAULT_INTERVAL
 ) -> str:
@@ -97,6 +94,7 @@ def fetch_intraday_stock_price(
         f"is ${close_price:.2f} USD (open {open_price:.2f}, high {high_price:.2f}, "
         f"low {low_price:.2f}, volume {volume:,}). Data via Alpha Vantage."
     )
+
 stock_price_tool_definition = {
     "type": "function",
     "function": {
@@ -124,9 +122,9 @@ stock_price_tool_definition = {
     },
 }
 def main() -> None:
-    with project_client:
+    with project_client_context() as project_client:
         agent = project_client.agents.create_agent(
-            model=os.environ["MODEL_DEPLOYMENT_NAME"],
+            model=MODEL_DEPLOYMENT_NAME,
             name="stock-market-assistant",
             instructions=(
                 "You are a helpful stock market assistant. Call fetch_intraday_stock_price whenever the user "

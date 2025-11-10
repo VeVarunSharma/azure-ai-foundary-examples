@@ -68,3 +68,4 @@ db.sqlite3
 
 # Temporary files
 **/tmp
+**/scripts.md
