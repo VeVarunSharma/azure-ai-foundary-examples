@@ -1,11 +1,19 @@
 import json
 import time
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Optional
+
+import requests
+from requests import RequestException
 
 from config.azure.ai_foundary_config import (
     MODEL_DEPLOYMENT_NAME,
     project_client_context,
+)
+from config.weatherstack_config import (
+    WEATHERSTACK_API_URL,
+    WEATHERSTACK_TIMEOUT_SECONDS,
+    get_weatherstack_api_key,
 )
 
 
@@ -25,34 +33,89 @@ class WeatherReport:
         )
 
 
-MOCK_WEATHER_DATA: Dict[str, WeatherReport] = {
-    "seattle": WeatherReport("Seattle", 12.5, "Overcast with light rain", 87),
-    "new york": WeatherReport("New York", 18.0, "Partly cloudy", 72),
-    "london": WeatherReport("London", 15.3, "Foggy", 90),
-}
+WEATHERSTACK_API_KEY = get_weatherstack_api_key()
 
 
-def get_mock_weather(location: str, date: Optional[str] = None) -> str:
-    """Resolve mock weather data for the agent's tool call."""
+def _extract_condition(descriptions: Optional[list[str]]) -> str:
+    if not descriptions:
+        return "Unknown conditions"
+    return ", ".join(desc for desc in descriptions if desc) or "Unknown conditions"
+
+
+def get_weatherstack_weather(location: str, date: Optional[str] = None) -> str:
+    """Fetch live weather data via the Weatherstack current-conditions endpoint."""
     if not location:
         return "Missing location."
 
-    report = MOCK_WEATHER_DATA.get(location.lower())
-    if not report:
-        return (
-            "Weather data unavailable for the requested location. "
-            "Try Seattle, New York, or London while using mock data."
+    params = {
+        "access_key": WEATHERSTACK_API_KEY,
+        "query": location,
+        "units": "m",
+    }
+
+    fallback_note = ""
+    if date:
+        fallback_note = (
+            "Historical dates are not supported on this plan; returning the latest conditions instead."
         )
 
-    return report.serialize(date=date)
+    try:
+        response = requests.get(
+            WEATHERSTACK_API_URL,
+            params=params,
+            timeout=WEATHERSTACK_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+    except RequestException as exc:
+        return f"Weather service request failed: {exc}"
+
+    try:
+        payload = response.json()
+    except ValueError:
+        return "Weather service returned an unreadable response."
+
+    if error := payload.get("error"):
+        code = error.get("code", "unknown")
+        message = error.get("info", "Unknown error from Weatherstack.")
+        return f"Weather service error ({code}): {message}"
+
+    location_data = payload.get("location") or {}
+    current = payload.get("current") or {}
+
+    if not current:
+        return "Weather service returned no current conditions for that query."
+
+    descriptions = current.get("weather_descriptions")
+    condition = _extract_condition(descriptions)
+    temperature = current.get("temperature")
+    humidity = current.get("humidity")
+
+    if temperature is None or humidity is None:
+        return "Weather service response was missing temperature or humidity data."
+
+    report = WeatherReport(
+        location=location_data.get("name") or location.title(),
+        temperature_c=float(temperature),
+        condition=condition,
+        humidity_pct=int(humidity),
+    )
+
+    reported_date = date or location_data.get("localtime")
+    summary = report.serialize(date=reported_date)
+    extra_bits = ["Data source: Weatherstack live API."]
+    if fallback_note:
+        extra_bits.insert(0, fallback_note)
+    if location_data.get("country"):
+        extra_bits.append(f"Country: {location_data['country']}")
+    return f"{summary}. {' '.join(extra_bits)}"
 
 
 weather_tool_definition = {
     "type": "function",
     "function": {
-        "name": "get_mock_weather",
+        "name": "get_weatherstack_weather",
         "description": (
-            "Return mock weather information (temperature, conditions, humidity) for a city."
+            "Return live weather information (temperature, conditions, humidity) for a city using the Weatherstack API."
         ),
         "parameters": {
             "type": "object",
@@ -78,8 +141,9 @@ def main() -> None:
             model=MODEL_DEPLOYMENT_NAME,
             name="weather-assistant",
             instructions=(
-                "You are a helpful weather assistant. Call the get_mock_weather tool to reply "
-                "with weather updates. Explain to the user that the data is mock when applicable."
+                "You are a helpful weather assistant. Call the get_weatherstack_weather tool "
+                "to provide real-time conditions from the Weatherstack API. Mention when "
+                "historical dates are unavailable and clarify any assumptions you make."
             ),
             tools=[weather_tool_definition],
         )
@@ -114,7 +178,7 @@ def main() -> None:
                         print(f"Skipping unsupported tool type: {call.type}")
                         continue
 
-                    if call.function.name != "get_mock_weather":
+                    if call.function.name != "get_weatherstack_weather":
                         print(f"Unknown function requested: {call.function.name}")
                         continue
 
@@ -124,7 +188,7 @@ def main() -> None:
                         print("Failed to parse tool arguments; returning error message.")
                         arguments = {}
 
-                    output = get_mock_weather(
+                    output = get_weatherstack_weather(
                         location=arguments.get("location", ""),
                         date=arguments.get("date"),
                     )

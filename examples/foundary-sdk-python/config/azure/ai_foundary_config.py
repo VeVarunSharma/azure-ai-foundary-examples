@@ -25,6 +25,7 @@ def _get_env(name: str) -> str:
 		raise ConfigError(f"Expected the {name} environment variable to be set.")
 	return value
 
+
 # AZURE_CLIENT_ID = _get_env("AZURE_CLIENT_ID")
 # AZURE_TENANT_ID = _get_env("AZURE_TENANT_ID")
 # AZURE_CLIENT_SECRET = _get_env("AZURE_CLIENT_SECRET")
