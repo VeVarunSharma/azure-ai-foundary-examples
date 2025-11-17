@@ -1,20 +1,18 @@
+"""Weather agent utilities."""
+
 import json
-import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 import requests
 from requests import RequestException
 
-from config.azure.ai_foundary_config import (
-    MODEL_DEPLOYMENT_NAME,
-    project_client_context,
-)
 from config.weatherstack_config import (
     WEATHERSTACK_API_URL,
     WEATHERSTACK_TIMEOUT_SECONDS,
     get_weatherstack_api_key,
 )
+from utils.agent_runtime import AgentConfig, AgentRunResult, run_agent_interaction
 
 
 @dataclass(frozen=True)
@@ -135,100 +133,65 @@ weather_tool_definition = {
 }
 
 
-def main() -> None:
-    with project_client_context() as project_client:
-        agent = project_client.agents.create_agent(
-            model=MODEL_DEPLOYMENT_NAME,
-            name="weather-assistant",
-            instructions=(
-                "You are a helpful weather assistant. Call the get_weatherstack_weather tool "
-                "to provide real-time conditions from the Weatherstack API. Mention when "
-                "historical dates are unavailable and clarify any assumptions you make."
-            ),
-            tools=[weather_tool_definition],
+def run(
+    user_input: str,
+    *,
+    additional_instructions: Optional[str] = None,
+    auto_delete_agent: bool = False,
+) -> AgentRunResult:
+    config = AgentConfig(
+        name="weather-assistant",
+        instructions=(
+            "You are a helpful weather assistant. Call the get_weatherstack_weather tool "
+            "to provide real-time conditions from the Weatherstack API. Mention when "
+            "historical dates are unavailable and clarify any assumptions you make."
+        ),
+        tools=[weather_tool_definition],
+    )
+
+    return run_agent_interaction(
+        config=config,
+        user_input=user_input,
+        additional_instructions=(
+            additional_instructions
+            or "If no date is given, assume the request is for today and echo that assumption."
+        ),
+        handle_tool_calls=_handle_tool_calls,
+        auto_delete_agent=auto_delete_agent,
+    )
+
+
+def _handle_tool_calls(project_client: Any, tool_calls: list[Any]) -> list[dict[str, str]]:
+    outputs: list[dict[str, str]] = []
+    for call in tool_calls:
+        if getattr(call, "type", "") != "function":
+            continue
+
+        func = getattr(call, "function", None)
+        if not func or getattr(func, "name", "") != "get_weatherstack_weather":
+            continue
+
+        try:
+            arguments = json.loads(getattr(func, "arguments", "") or "{}")
+        except json.JSONDecodeError:
+            arguments = {}
+
+        output = get_weatherstack_weather(
+            location=arguments.get("location", ""),
+            date=arguments.get("date"),
         )
-        print(f"Created agent, ID: {agent.id}")
-
-        thread = project_client.agents.threads.create()
-        print(f"Created thread, ID: {thread.id}")
-
-        message = project_client.agents.messages.create(
-            thread_id=thread.id,
-            role="user",
-            content="What's the weather like in Seattle today?",
+        outputs.append(
+            {
+                "tool_call_id": getattr(call, "id", ""),
+                "output": output,
+            }
         )
-        print(f"Created message, ID: {message['id']}")
 
-        run = project_client.agents.runs.create(
-            thread_id=thread.id,
-            agent_id=agent.id,
-            additional_instructions=(
-                "If no date is given, assume the request is for today and echo that assumption."
-            ),
-        )
-        print(f"Run created with status: {run.status}")
-
-        while run.status not in {"completed", "failed", "cancelled"}:
-            if run.status == "requires_action":
-                tool_calls = run.required_action.submit_tool_outputs.tool_calls
-                tool_outputs = []
-
-                for call in tool_calls:
-                    if call.type != "function":
-                        print(f"Skipping unsupported tool type: {call.type}")
-                        continue
-
-                    if call.function.name != "get_weatherstack_weather":
-                        print(f"Unknown function requested: {call.function.name}")
-                        continue
-
-                    try:
-                        arguments = json.loads(call.function.arguments or "{}")
-                    except json.JSONDecodeError:
-                        print("Failed to parse tool arguments; returning error message.")
-                        arguments = {}
-
-                    output = get_weatherstack_weather(
-                        location=arguments.get("location", ""),
-                        date=arguments.get("date"),
-                    )
-                    tool_outputs.append(
-                        {
-                            "tool_call_id": call.id,
-                            "output": output,
-                        }
-                    )
-
-                if tool_outputs:
-                    run = project_client.agents.runs.submit_tool_outputs(
-                        thread_id=thread.id,
-                        run_id=run.id,
-                        tool_outputs=tool_outputs,
-                    )
-                    print("Submitted mock weather tool outputs.")
-                else:
-                    raise RuntimeError("Run requires tool output but no outputs were generated.")
-            else:
-                time.sleep(1)
-                run = project_client.agents.runs.get(
-                    thread_id=thread.id,
-                    run_id=run.id,
-                )
-                print(f"Polled run status: {run.status}")
-
-        print(f"Run finished with status: {run.status}")
-        if run.status == "failed":
-            print(f"Run failed: {run.last_error}")
-
-        messages = project_client.agents.messages.list(thread_id=thread.id)
-        for msg in messages:
-            print(f"Role: {msg.role}")
-            print(f"Content: {msg.content}")
-            print("---")
-
-        # project_client.agents.delete_agent(agent.id)
-        # print("Deleted agent")
+    return outputs
 
 
 if __name__ == "__main__":
-    main()
+    from utils.agent_runtime import print_thread_messages
+
+    result = run("What's the weather like in Seattle today?")
+    print_thread_messages(result)

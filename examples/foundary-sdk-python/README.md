@@ -20,22 +20,28 @@ These scripts demonstrate how to work with Azure AI Foundry agents, including cu
 
 You can place these values in a local `.env` file; they are automatically loaded via `python-dotenv`.
 
-## Weather Agent
+## CLI entry point
 
-Run the weather agent to chat with the Azure AI Foundry agent that calls Weatherstack for live data:
+Use `main.py` to choose which agent to run and provide ad-hoc prompts from the terminal:
+
+```bash
+python main.py --agent weather --prompt "What's the weather like in Seattle today?"
+```
+
+If you omit `--prompt`, the script will interactively ask for your message. Pass `--additional-instructions` to send run-scoped directives (for example, "respond in Spanish") and `--auto-delete-agent` to delete the temporary agent after the run completes.
+
+### Available agents
+
+| Agent     | Description                                                           |
+| --------- | --------------------------------------------------------------------- |
+| `weather` | Calls the Weatherstack-powered function tool for live conditions.     |
+| `math`    | Uses the Code Interpreter tool to solve and visualize math questions. |
+
+Run individual agent modules directly if you prefer:
 
 ```bash
 python weather_agent.py
+python math_agent.py
 ```
 
-The agent will:
-
-- Create a temporary agent using your configured model deployment.
-- Call the `get_weatherstack_weather` tool whenever it needs real-time conditions.
-- Respond with the latest temperature, humidity, and descriptive conditions sourced from Weatherstack.
-
-### Notes
-
-- Historical dates are not supported on the free Weatherstack plan. When a user asks for a date, the tool clarifies that it returns current conditions instead.
-- Consider deleting temporary agents once you're finished experimenting to avoid clutter within your Azure AI Foundry project.
-- The script prints all agent/assistant messages for easy debugging.
+Each module exposes a `run(prompt, ...)` helper that can be imported into other scripts.

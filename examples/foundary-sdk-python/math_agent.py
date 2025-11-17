@@ -1,58 +1,75 @@
+"""Utilities for interacting with the math-focused Azure AI Foundry agent."""
+
 from pathlib import Path
+from typing import Optional
+
 from azure.ai.agents.models import CodeInterpreterTool
 
-from config.azure.ai_foundary_config import (
-    MODEL_DEPLOYMENT_NAME,
-    project_client_context,
+from utils.agent_runtime import (
+    AgentConfig,
+    AgentRunResult,
+    run_agent_interaction,
 )
 
 code_interpreter = CodeInterpreterTool()
-with project_client_context() as project_client:
-    # Create an agent with the Code Interpreter tool
-    agent = project_client.agents.create_agent(
-    model=MODEL_DEPLOYMENT_NAME,
-        name="math-agent-v1",  # Name of the agent
-        instructions="You politely help with math questions. Use the Code Interpreter tool when asked to visualize numbers.",  # Instructions for the agent
-        tools=code_interpreter.definitions,  # Attach the tool
+
+_DEFAULT_ADDITIONAL_INSTRUCTIONS = (
+    "Please address the user as Jane Doe. The user has a premium account."
+)
+_IMAGE_OUTPUT_DIR = Path("tmp/images")
+
+
+def run(
+    user_input: str,
+    *,
+    additional_instructions: Optional[str] = None,
+    auto_delete_agent: bool = False,
+) -> AgentRunResult:
+    """Execute the math agent against the provided user input."""
+
+    config = AgentConfig(
+        name="math-agent-v1",
+        instructions=(
+            "You politely help with math questions. Use the Code Interpreter tool "
+            "when asked to visualize numbers."
+        ),
+        tools=code_interpreter.definitions,
     )
-    print(f"Created agent, ID: {agent.id}")
 
-    # Create a thread for communication
-    thread = project_client.agents.threads.create()
-    print(f"Created thread, ID: {thread.id}")
-
-    # Add a message to the thread
-    message = project_client.agents.messages.create(
-        thread_id=thread.id,
-        role="user",  # Role of the message sender
-        content="Hi, Agent! Draw a graph for a line with a slope of 4 and y-intercept of 9.",  # Message content
+    return run_agent_interaction(
+        config=config,
+        user_input=user_input,
+        additional_instructions=additional_instructions or _DEFAULT_ADDITIONAL_INSTRUCTIONS,
+        post_run_hook=_save_generated_images,
+        auto_delete_agent=auto_delete_agent,
     )
-    print(f"Created message, ID: {message['id']}")
 
-    # Create and process an agent run
-    run = project_client.agents.runs.create_and_process(
-        thread_id=thread.id,
-        agent_id=agent.id,
-        additional_instructions="Please address the user as Jane Doe. The user has a premium account",
-    )
-    print(f"Run finished with status: {run.status}")
 
-    # Check if the run failed
-    if run.status == "failed":
-        print(f"Run failed: {run.last_error}")
+def _save_generated_images(project_client, result: AgentRunResult) -> None:
+    """Persist any image outputs to disk for easy inspection."""
 
-    # Fetch and log all messages
-    messages = project_client.agents.messages.list(thread_id=thread.id)
-    for message in messages:
-        print(f"Role: {message.role}, Content: {message.content}")
+    if not _IMAGE_OUTPUT_DIR.exists():
+        _IMAGE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-        # Save every image file in the message
-        for img in message.image_contents:
-            file_id = img.image_file.file_id
-            file_name = f"tmp/images/{file_id}_image_file.png"
-            project_client.agents.files.save(file_id=file_id, file_name=file_name)
-            print(f"Saved image file to: {Path.cwd() / file_name}")
+    for message in result.messages:
+        attachments = getattr(message, "image_contents", []) or []
+        for attachment in attachments:
+            image_file = getattr(attachment, "image_file", None)
+            if not image_file:
+                continue
+            file_id = getattr(image_file, "file_id", None)
+            if not file_id:
+                continue
+            file_path = _IMAGE_OUTPUT_DIR / f"{file_id}_image_file.png"
+            project_client.agents.files.save(
+                file_id=file_id,
+                file_name=str(file_path),
+            )
+            print(f"Saved image file to: {file_path.resolve()}")
 
-    # Uncomment these lines to delete the agent when done
-    # project_client.agents.delete_agent(agent.id)
-    # print("Deleted agent")
+
+if __name__ == "__main__":
+    from utils.agent_runtime import print_thread_messages
+
+    sample = "Hi, Agent! Draw a graph for a line with a slope of 4 and y-intercept of 9."
+    print_thread_messages(run(sample))
