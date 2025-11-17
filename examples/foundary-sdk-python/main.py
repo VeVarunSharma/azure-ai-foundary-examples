@@ -8,8 +8,8 @@ from typing import Callable, Mapping, Optional
 
 from utils.agent_runtime import AgentRunResult, print_thread_messages
 
-import math_agent
-import weather_agent
+import agents.math_agent as math_agent
+import agents.weather_agent as weather_agent
 
 def build_parser() -> argparse.ArgumentParser:
 	parser = argparse.ArgumentParser(
